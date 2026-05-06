@@ -1,0 +1,38 @@
+from app.models.entities import (
+    AIReport,
+    AuditScore,
+    Campaign,
+    CampaignStatus,
+    CRMActivity,
+    CRMStage,
+    CrawlJob,
+    JobStatus,
+    Lead,
+    LeadPriority,
+    MessageChannel,
+    OutreachMessage,
+    Proposal,
+    Screenshot,
+    Website,
+    WebsiteAudit,
+)
+
+__all__ = [
+    "AIReport",
+    "AuditScore",
+    "Campaign",
+    "CampaignStatus",
+    "CRMActivity",
+    "CRMStage",
+    "CrawlJob",
+    "JobStatus",
+    "Lead",
+    "LeadPriority",
+    "MessageChannel",
+    "OutreachMessage",
+    "Proposal",
+    "Screenshot",
+    "Website",
+    "WebsiteAudit",
+]
+
