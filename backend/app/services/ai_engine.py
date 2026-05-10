@@ -16,16 +16,28 @@ class AIAuditOutput(BaseModel):
     closing_probability: int = Field(ge=0, le=100)
 
 
+class AIGenerationError(RuntimeError):
+    pass
+
+
 def generate_ai_audit(lead: Lead, audit: WebsiteAudit, currency: str = "INR") -> dict:
     settings = get_settings()
-    fallback = fallback_ai_audit(lead, audit, currency)
     if not settings.openai_api_key:
-        return fallback | {"raw_response": {"mode": "fallback", "reason": "OPENAI_API_KEY missing"}}
+        raise AIGenerationError("OPENAI_API_KEY is required for AI report generation.")
 
     try:
         from openai import OpenAI
 
         client = OpenAI(api_key=settings.openai_api_key)
+        input_snapshot = {
+            "business_name": lead.business_name,
+            "industry": lead.industry,
+            "location": {"city": lead.city, "country": lead.country},
+            "website_score": audit.total_score,
+            "problem_summary": audit.problem_summary,
+            "raw_checks": audit.raw_checks,
+            "currency": currency,
+        }
         response = client.responses.parse(
             model=settings.openai_model,
             input=[
@@ -53,10 +65,22 @@ def generate_ai_audit(lead: Lead, audit: WebsiteAudit, currency: str = "INR") ->
         )
         parsed = response.output_parsed
         if parsed is None:
-            return fallback | {"raw_response": {"mode": "fallback", "reason": "empty AI response"}}
-        return parsed.model_dump() | {"raw_response": {"mode": "openai", "model": settings.openai_model}}
+            raise AIGenerationError("OpenAI returned an empty AI report.")
+        usage = getattr(response, "usage", None)
+        return parsed.model_dump() | {
+            "raw_response": {"mode": "openai", "model": settings.openai_model},
+            "prompt_version": "audit-strategy-v1",
+            "model_name": settings.openai_model,
+            "input_snapshot": input_snapshot,
+            "output_schema_version": "ai-report-v1",
+            "token_usage": usage.model_dump() if hasattr(usage, "model_dump") else {},
+            "cost_metadata": {},
+            "failure_details": {},
+        }
     except Exception as exc:
-        return fallback | {"raw_response": {"mode": "fallback", "error": str(exc)}}
+        if isinstance(exc, AIGenerationError):
+            raise
+        raise AIGenerationError(str(exc)) from exc
 
 
 def fallback_ai_audit(lead: Lead, audit: WebsiteAudit, currency: str) -> dict:

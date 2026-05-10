@@ -22,13 +22,20 @@ export function AuditCenter() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [jobs, setJobs] = useState<AuditJob[]>([]);
   const [busyLead, setBusyLead] = useState<string | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     void refresh();
   }, []);
 
   async function refresh() {
-    setLeads(await api.leads());
+    try {
+      setLeads(await api.leads());
+      setError("");
+    } catch {
+      setLeads([]);
+      setError("Unable to load audit queue. Check the backend connection and refresh.");
+    }
   }
 
   async function runAudit(lead: Lead) {
@@ -37,6 +44,9 @@ export function AuditCenter() {
       const response = await api.runAudit(lead.id);
       setJobs((current) => [response.job, ...current].slice(0, 8));
       await refresh();
+      setError("");
+    } catch {
+      setError("Unable to start audit. Please try again after the backend completes the request.");
     } finally {
       setBusyLead(null);
     }
@@ -48,6 +58,7 @@ export function AuditCenter() {
         <h1 className="text-2xl font-semibold tracking-normal">Audits</h1>
         <p className="mt-1 text-sm text-ink/60">Crawler jobs, website signals, scoring, and evidence capture.</p>
       </div>
+      {error ? <div className="rounded-md border border-line bg-panel p-3 text-sm text-ink/60">{error}</div> : null}
 
       <section className="grid gap-4 lg:grid-cols-[0.7fr_1.3fr]">
         <div className="rounded-lg border border-line bg-panel p-4 shadow-panel">
@@ -113,32 +124,40 @@ export function AuditCenter() {
               </tr>
             </thead>
             <tbody>
-              {leads.map((lead) => (
-                <tr key={lead.id} className="border-t border-line">
-                  <td className="px-4 py-3 font-medium">{lead.business_name}</td>
-                  <td className="px-4 py-3 text-ink/65">{lead.website_url ?? "-"}</td>
-                  <td className={`px-4 py-3 font-semibold ${scoreColor(lead.website_score)}`}>
-                    {lead.website_score ?? "-"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge value={lead.priority_category} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge value={lead.crm_stage} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <Button
-                      variant="secondary"
-                      icon={lead.website_score == null ? <Zap size={16} /> : <ClipboardCheck size={16} />}
-                      onClick={() => runAudit(lead)}
-                      disabled={!lead.website_url || busyLead === lead.id}
-                      title="Run audit"
-                    >
-                      {busyLead === lead.id ? "Running" : "Audit"}
-                    </Button>
+              {leads.length ? (
+                leads.map((lead) => (
+                  <tr key={lead.id} className="border-t border-line">
+                    <td className="px-4 py-3 font-medium">{lead.business_name}</td>
+                    <td className="px-4 py-3 text-ink/65">{lead.website_url ?? "-"}</td>
+                    <td className={`px-4 py-3 font-semibold ${scoreColor(lead.website_score)}`}>
+                      {lead.website_score ?? "-"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge value={lead.priority_category} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge value={lead.crm_stage} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <Button
+                        variant="secondary"
+                        icon={lead.website_score == null ? <Zap size={16} /> : <ClipboardCheck size={16} />}
+                        onClick={() => runAudit(lead)}
+                        disabled={!lead.website_url || busyLead === lead.id}
+                        title="Run audit"
+                      >
+                        {busyLead === lead.id ? "Running" : "Audit"}
+                      </Button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr className="border-t border-line">
+                  <td className="px-4 py-6 text-sm text-ink/45" colSpan={6}>
+                    No leads ready for audit.
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>

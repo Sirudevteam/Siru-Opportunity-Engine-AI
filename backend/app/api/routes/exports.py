@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.deps import require_role
 from app.db.session import get_db
 from app.models import Campaign, Lead, Proposal, WebsiteAudit
 
@@ -15,7 +16,10 @@ router = APIRouter()
 
 
 @router.get("/leads.csv")
-def export_leads(db: Session = Depends(get_db)) -> StreamingResponse:
+def export_leads(
+    db: Session = Depends(get_db),
+    _actor=Depends(require_role("manage")),
+) -> StreamingResponse:
     rows = db.scalars(select(Lead).order_by(Lead.created_at.desc())).all()
     return csv_response(
         "leads.csv",
@@ -39,7 +43,10 @@ def export_leads(db: Session = Depends(get_db)) -> StreamingResponse:
 
 
 @router.get("/audits.csv")
-def export_audits(db: Session = Depends(get_db)) -> StreamingResponse:
+def export_audits(
+    db: Session = Depends(get_db),
+    _actor=Depends(require_role("manage")),
+) -> StreamingResponse:
     rows = db.scalars(select(WebsiteAudit).order_by(WebsiteAudit.created_at.desc())).all()
     return csv_response(
         "audits.csv",
@@ -49,7 +56,10 @@ def export_audits(db: Session = Depends(get_db)) -> StreamingResponse:
 
 
 @router.get("/crm.csv")
-def export_crm(db: Session = Depends(get_db)) -> StreamingResponse:
+def export_crm(
+    db: Session = Depends(get_db),
+    _actor=Depends(require_role("manage")),
+) -> StreamingResponse:
     rows = db.scalars(select(Lead).order_by(Lead.updated_at.desc())).all()
     return csv_response(
         "crm.csv",
@@ -59,7 +69,10 @@ def export_crm(db: Session = Depends(get_db)) -> StreamingResponse:
 
 
 @router.get("/campaigns.csv")
-def export_campaigns(db: Session = Depends(get_db)) -> StreamingResponse:
+def export_campaigns(
+    db: Session = Depends(get_db),
+    _actor=Depends(require_role("manage")),
+) -> StreamingResponse:
     rows = db.scalars(select(Campaign).order_by(Campaign.created_at.desc())).all()
     return csv_response(
         "campaigns.csv",
@@ -69,7 +82,10 @@ def export_campaigns(db: Session = Depends(get_db)) -> StreamingResponse:
 
 
 @router.get("/proposals.csv")
-def export_proposals(db: Session = Depends(get_db)) -> StreamingResponse:
+def export_proposals(
+    db: Session = Depends(get_db),
+    _actor=Depends(require_role("manage")),
+) -> StreamingResponse:
     rows = db.scalars(select(Proposal).order_by(Proposal.created_at.desc())).all()
     return csv_response(
         "proposals.csv",

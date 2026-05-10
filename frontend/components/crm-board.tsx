@@ -26,13 +26,20 @@ const stages: CRMStage[] = [
 export function CRMBoard() {
   const [pipeline, setPipeline] = useState<PipelineColumn[]>([]);
   const [moving, setMoving] = useState<string | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     void refresh();
   }, []);
 
   async function refresh() {
-    setPipeline(await api.pipeline());
+    try {
+      setPipeline(await api.pipeline());
+      setError("");
+    } catch {
+      setPipeline([]);
+      setError("Unable to load CRM pipeline. Check the backend connection and refresh.");
+    }
   }
 
   const total = useMemo(() => pipeline.reduce((sum, column) => sum + column.count, 0), [pipeline]);
@@ -44,18 +51,9 @@ export function CRMBoard() {
     try {
       await api.moveStage(lead.id, nextStage);
       await refresh();
+      setError("");
     } catch {
-      setPipeline((columns) =>
-        columns.map((column) => ({
-          ...column,
-          leads:
-            column.stage === lead.crm_stage
-              ? column.leads.filter((item) => item.id !== lead.id)
-              : column.stage === nextStage
-                ? [{ ...lead, crm_stage: nextStage }, ...column.leads]
-                : column.leads
-        }))
-      );
+      setError("Unable to move lead. Please try again after the backend completes the request.");
     } finally {
       setMoving(null);
     }
@@ -72,54 +70,61 @@ export function CRMBoard() {
           Refresh
         </Button>
       </div>
+      {error ? <div className="rounded-md border border-line bg-panel p-3 text-sm text-ink/60">{error}</div> : null}
 
       <section className="grid auto-cols-[300px] grid-flow-col gap-4 overflow-x-auto pb-4">
-        {pipeline.map((column) => (
-          <div key={column.stage} className="rounded-lg border border-line bg-panel shadow-panel">
-            <div className="flex h-14 items-center justify-between border-b border-line px-4">
-              <div>
-                <h2 className="text-sm font-semibold">{titleCase(column.stage)}</h2>
-                <p className="text-xs text-ink/55">Score {column.total_score}</p>
+        {pipeline.length ? (
+          pipeline.map((column) => (
+            <div key={column.stage} className="rounded-lg border border-line bg-panel shadow-panel">
+              <div className="flex h-14 items-center justify-between border-b border-line px-4">
+                <div>
+                  <h2 className="text-sm font-semibold">{titleCase(column.stage)}</h2>
+                  <p className="text-xs text-ink/55">Score {column.total_score}</p>
+                </div>
+                <span className="grid h-8 min-w-8 place-items-center rounded-md bg-ink/10 px-2 text-sm font-semibold">
+                  {column.count}
+                </span>
               </div>
-              <span className="grid h-8 min-w-8 place-items-center rounded-md bg-ink/10 px-2 text-sm font-semibold">
-                {column.count}
-              </span>
-            </div>
-            <div className="space-y-3 p-3">
-              {column.leads.length ? (
-                column.leads.map((lead) => (
-                  <article key={lead.id} className="rounded-md border border-line p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h3 className="text-sm font-semibold">{lead.business_name}</h3>
-                        <p className="mt-1 text-xs text-ink/55">
-                          {lead.city}, {lead.country}
-                        </p>
+              <div className="space-y-3 p-3">
+                {column.leads.length ? (
+                  column.leads.map((lead) => (
+                    <article key={lead.id} className="rounded-md border border-line p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <h3 className="text-sm font-semibold">{lead.business_name}</h3>
+                          <p className="mt-1 text-xs text-ink/55">
+                            {lead.city}, {lead.country}
+                          </p>
+                        </div>
+                        <span className="text-sm font-semibold">{lead.final_lead_score ?? "-"}</span>
                       </div>
-                      <span className="text-sm font-semibold">{lead.final_lead_score ?? "-"}</span>
-                    </div>
-                    <div className="mt-3 flex items-center justify-between gap-2">
-                      <StatusBadge value={lead.priority_category} />
-                      {lead.crm_stage !== "won" && lead.crm_stage !== "lost" ? (
-                        <Button
-                          variant="ghost"
-                          icon={<ArrowRight size={15} />}
-                          onClick={() => moveLead(lead)}
-                          disabled={moving === lead.id}
-                          title="Move to next stage"
-                        >
-                          Move
-                        </Button>
-                      ) : null}
-                    </div>
-                  </article>
-                ))
-              ) : (
-                <div className="rounded-md border border-dashed border-line p-6 text-sm text-ink/45">Empty</div>
-              )}
+                      <div className="mt-3 flex items-center justify-between gap-2">
+                        <StatusBadge value={lead.priority_category} />
+                        {lead.crm_stage !== "won" && lead.crm_stage !== "lost" ? (
+                          <Button
+                            variant="ghost"
+                            icon={<ArrowRight size={15} />}
+                            onClick={() => moveLead(lead)}
+                            disabled={moving === lead.id}
+                            title="Move to next stage"
+                          >
+                            Move
+                          </Button>
+                        ) : null}
+                      </div>
+                    </article>
+                  ))
+                ) : (
+                  <div className="rounded-md border border-dashed border-line p-6 text-sm text-ink/45">Empty</div>
+                )}
+              </div>
             </div>
+          ))
+        ) : (
+          <div className="rounded-lg border border-line bg-panel p-6 text-sm text-ink/45 shadow-panel">
+            No pipeline records found.
           </div>
-        ))}
+        )}
       </section>
     </div>
   );

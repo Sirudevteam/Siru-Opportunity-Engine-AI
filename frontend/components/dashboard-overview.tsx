@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Activity, ClipboardCheck, FileText, Megaphone, Search, Trophy } from "lucide-react";
 import { api } from "@/lib/api";
-import { mockLeads } from "@/lib/mock-data";
 import { scoreColor, titleCase } from "@/lib/utils";
 import type { DashboardOverview, Lead } from "@/types";
 import { KpiCard } from "./ui/kpi-card";
@@ -12,11 +11,21 @@ import { StatusBadge } from "./ui/status-badge";
 
 export function DashboardOverviewScreen() {
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
-  const [leads, setLeads] = useState<Lead[]>(mockLeads);
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    void api.overview().then(setOverview);
-    void api.leads().then(setLeads);
+    void Promise.all([api.overview(), api.leads()])
+      .then(([overviewData, leadData]) => {
+        setOverview(overviewData);
+        setLeads(leadData);
+        setError("");
+      })
+      .catch(() => {
+        setOverview(null);
+        setLeads([]);
+        setError("Unable to load dashboard data. Check the backend connection and refresh.");
+      });
   }, []);
 
   const priorityData = useMemo(() => {
@@ -27,12 +36,9 @@ export function DashboardOverviewScreen() {
     }));
   }, [overview]);
 
-  const trendData = [
-    { month: "M1", leads: 80, audits: 35 },
-    { month: "M2", leads: 180, audits: 112 },
-    { month: "M3", leads: 320, audits: 246 },
-    { month: "M4", leads: overview?.leads.total ?? 420, audits: overview?.audits.completed ?? 300 }
-  ];
+  const trendData = overview
+    ? [{ period: "Current", leads: overview.leads.total, audits: overview.audits.completed }]
+    : [];
 
   return (
     <div className="space-y-6">
@@ -42,6 +48,7 @@ export function DashboardOverviewScreen() {
           <p className="mt-1 text-sm text-ink/60">Campaigns, audits, pipeline, proposals, and sales movement.</p>
         </div>
       </div>
+      {error ? <div className="rounded-md border border-line bg-panel p-3 text-sm text-ink/60">{error}</div> : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         <KpiCard
@@ -90,13 +97,13 @@ export function DashboardOverviewScreen() {
         <div className="rounded-lg border border-line bg-panel p-4 shadow-panel">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-base font-semibold">Acquisition Movement</h2>
-            <span className="text-xs text-ink/55">Last 4 periods</span>
+            <span className="text-xs text-ink/55">Current totals</span>
           </div>
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={trendData} margin={{ left: -20, right: 10, top: 10, bottom: 0 }}>
                 <CartesianGrid stroke="#e6e8ef" vertical={false} />
-                <XAxis dataKey="month" tickLine={false} axisLine={false} />
+                <XAxis dataKey="period" tickLine={false} axisLine={false} />
                 <YAxis tickLine={false} axisLine={false} />
                 <Tooltip />
                 <Area type="monotone" dataKey="leads" stroke="#062bff" fill="#062bff" fillOpacity={0.12} />
@@ -143,27 +150,35 @@ export function DashboardOverviewScreen() {
               </tr>
             </thead>
             <tbody>
-              {[...leads]
-                .sort((a, b) => (b.final_lead_score ?? 0) - (a.final_lead_score ?? 0))
-                .slice(0, 6)
-                .map((lead) => (
-                  <tr key={lead.id} className="border-t border-line">
-                    <td className="px-4 py-3 font-medium">{lead.business_name}</td>
-                    <td className="px-4 py-3 text-ink/65">
-                      {lead.city}, {lead.country}
-                    </td>
-                    <td className={`px-4 py-3 font-semibold ${scoreColor(lead.website_score)}`}>
-                      {lead.website_score ?? "-"}
-                    </td>
-                    <td className="px-4 py-3 font-semibold">{lead.final_lead_score ?? "-"}</td>
-                    <td className="px-4 py-3">
-                      <StatusBadge value={lead.priority_category} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge value={lead.crm_stage} />
-                    </td>
-                  </tr>
-                ))}
+              {leads.length ? (
+                [...leads]
+                  .sort((a, b) => (b.final_lead_score ?? 0) - (a.final_lead_score ?? 0))
+                  .slice(0, 6)
+                  .map((lead) => (
+                    <tr key={lead.id} className="border-t border-line">
+                      <td className="px-4 py-3 font-medium">{lead.business_name}</td>
+                      <td className="px-4 py-3 text-ink/65">
+                        {lead.city}, {lead.country}
+                      </td>
+                      <td className={`px-4 py-3 font-semibold ${scoreColor(lead.website_score)}`}>
+                        {lead.website_score ?? "-"}
+                      </td>
+                      <td className="px-4 py-3 font-semibold">{lead.final_lead_score ?? "-"}</td>
+                      <td className="px-4 py-3">
+                        <StatusBadge value={lead.priority_category} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge value={lead.crm_stage} />
+                      </td>
+                    </tr>
+                  ))
+              ) : (
+                <tr className="border-t border-line">
+                  <td className="px-4 py-6 text-sm text-ink/45" colSpan={6}>
+                    No opportunities found.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

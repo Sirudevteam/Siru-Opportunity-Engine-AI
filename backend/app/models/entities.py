@@ -203,8 +203,11 @@ class CrawlJob(TimestampMixin, Base):
     lead_id: Mapped[str | None] = mapped_column(ForeignKey("leads.id"))
     job_type: Mapped[str] = mapped_column(String(80), nullable=False)
     status: Mapped[JobStatus] = mapped_column(String(40), default=JobStatus.pending.value)
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0)
+    current_step: Mapped[str | None] = mapped_column(String(180))
     error: Mapped[str | None] = mapped_column(Text)
     result: Mapped[dict] = mapped_column(JSON, default=dict)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -256,6 +259,13 @@ class AIReport(TimestampMixin, Base):
     outreach_angle: Mapped[str] = mapped_column(Text, nullable=False)
     closing_probability: Mapped[int] = mapped_column(Integer, nullable=False)
     raw_response: Mapped[dict] = mapped_column(JSON, default=dict)
+    prompt_version: Mapped[str] = mapped_column(String(40), default="audit-strategy-v1")
+    model_name: Mapped[str | None] = mapped_column(String(120))
+    input_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    output_schema_version: Mapped[str] = mapped_column(String(40), default="ai-report-v1")
+    token_usage: Mapped[dict] = mapped_column(JSON, default=dict)
+    cost_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    failure_details: Mapped[dict] = mapped_column(JSON, default=dict)
 
     lead: Mapped[Lead] = relationship(back_populates="ai_reports")
     audit: Mapped[WebsiteAudit | None] = relationship(back_populates="ai_reports")
@@ -289,6 +299,7 @@ class CRMActivity(TimestampMixin, Base):
     actor_id: Mapped[str | None] = mapped_column(String(120))
     actor_name: Mapped[str | None] = mapped_column(String(180))
     actor_role: Mapped[str | None] = mapped_column(String(120))
+    next_follow_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     lead: Mapped[Lead] = relationship(back_populates="crm_activities")
 
@@ -306,8 +317,34 @@ class Proposal(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(60), default="draft")
     pdf_url: Mapped[str | None] = mapped_column(String(800))
     content: Mapped[dict] = mapped_column(JSON, default=dict)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by_id: Mapped[str | None] = mapped_column(String(120))
     created_by_name: Mapped[str | None] = mapped_column(String(180))
 
     lead: Mapped[Lead] = relationship(back_populates="proposals")
+
+
+class EnrichmentRecord(TimestampMixin, Base):
+    __tablename__ = "enrichment_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    lead_id: Mapped[str] = mapped_column(ForeignKey("leads.id"), nullable=False)
+    source: Mapped[str] = mapped_column(String(80), nullable=False)
+    signals: Mapped[dict] = mapped_column(JSON, default=dict)
+    confidence: Mapped[float | None] = mapped_column(Float)
+
+
+class EmbeddingRecord(TimestampMixin, Base):
+    __tablename__ = "embedding_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
+    provider: Mapped[str] = mapped_column(String(80), default="openai")
+    model: Mapped[str] = mapped_column(String(120), nullable=False)
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_object_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    source_object_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    version: Mapped[str] = mapped_column(String(40), default="v1")
+    vector_id: Mapped[str | None] = mapped_column(String(120))
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
 

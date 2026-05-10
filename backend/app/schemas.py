@@ -146,8 +146,11 @@ class JobRead(BaseModel):
     lead_id: str | None
     job_type: str
     status: JobStatus
+    progress_percent: int
+    current_step: str | None
     error: str | None
     result: dict[str, Any]
+    retry_count: int
     created_at: datetime
     updated_at: datetime
     started_at: datetime | None
@@ -221,14 +224,27 @@ class AIReportRead(BaseModel):
     outreach_angle: str
     closing_probability: int
     raw_response: dict[str, Any]
+    prompt_version: str
+    model_name: str | None
+    input_snapshot: dict[str, Any]
+    output_schema_version: str
+    token_usage: dict[str, Any]
+    cost_metadata: dict[str, Any]
+    failure_details: dict[str, Any]
     created_at: datetime
 
 
 class LeadAuditDetail(BaseModel):
     lead: LeadRead
+    campaign: CampaignRead | None = None
     website: WebsiteRead | None = None
     audit: WebsiteAuditRead | None = None
     ai_report: AIReportRead | None = None
+    outreach_messages: list["OutreachMessageRead"] = []
+    proposals: list["ProposalRead"] = []
+    crm_activities: list["CRMActivityRead"] = []
+    jobs: list[JobRead] = []
+    enrichments: list["EnrichmentRecordRead"] = []
 
 
 class AuditRunResponse(BaseModel):
@@ -272,6 +288,7 @@ class CRMStageUpdate(BaseModel):
 class CRMActivityCreate(BaseModel):
     activity_type: str = Field(min_length=2, max_length=80)
     note: str = Field(min_length=1)
+    next_follow_up_at: datetime | None = None
 
 
 class CRMActivityRead(BaseModel):
@@ -286,6 +303,7 @@ class CRMActivityRead(BaseModel):
     actor_id: str | None
     actor_name: str | None
     actor_role: str | None
+    next_follow_up_at: datetime | None
     created_at: datetime
 
 
@@ -309,9 +327,37 @@ class ProposalRead(BaseModel):
     status: str
     pdf_url: str | None
     content: dict[str, Any]
+    approved_at: datetime | None
+    archived_at: datetime | None
     created_by_id: str | None
     created_by_name: str | None
     created_at: datetime
+
+
+class ProposalUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=2, max_length=240)
+    summary: str | None = None
+    estimated_value: str | None = Field(default=None, max_length=120)
+    status: str | None = Field(default=None, max_length=60)
+    content: dict[str, Any] | None = None
+
+
+class EnrichmentRecordRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    lead_id: str
+    source: str
+    signals: dict[str, Any]
+    confidence: float | None
+    created_at: datetime
+
+
+class CampaignDetail(BaseModel):
+    campaign: CampaignRead
+    metrics: dict[str, Any]
+    leads: list[LeadRead]
+    jobs: list[JobRead]
 
 
 class DashboardOverview(BaseModel):
@@ -321,4 +367,7 @@ class DashboardOverview(BaseModel):
     crm: dict[str, Any]
     proposals: dict[str, Any]
     sales: dict[str, Any]
+
+
+LeadAuditDetail.model_rebuild()
 

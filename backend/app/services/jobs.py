@@ -51,6 +51,8 @@ def create_job(
         lead_id=lead_id,
         job_type=job_type,
         status=JobStatus.pending.value,
+        progress_percent=0,
+        current_step="Queued",
         result=result or {},
     )
     db.add(job)
@@ -69,8 +71,9 @@ def run_google_places_job(job_id: str, limit: int = 50) -> None:
         if not campaign:
             fail_job(db, job, "Campaign not found.")
             return
-        start_job(db, job)
+        start_job(db, job, "Discovering Google Places leads")
         discovered = discover_google_places(campaign.country, campaign.city, campaign.industry, limit)
+        update_job(db, job, 45, "Importing discovered leads")
         imported = 0
         duplicates = 0
         lead_ids: list[str] = []
@@ -106,8 +109,9 @@ def run_audit_job(job_id: str) -> None:
         if not lead.website_url:
             fail_job(db, job, "Lead has no website URL.")
             return
-        start_job(db, job)
+        start_job(db, job, "Crawling website")
         crawl = crawl_website(lead.website_url)
+        update_job(db, job, 45, "Saving website evidence")
         website_data = crawl.analysis["website_data"]
         website = Website(
             lead_id=lead.id,
@@ -141,6 +145,7 @@ def run_audit_job(job_id: str) -> None:
                 )
             )
 
+        update_job(db, job, 65, "Scoring website")
         scoring = crawl.analysis["scoring"]
         audit = WebsiteAudit(
             lead_id=lead.id,
@@ -174,7 +179,8 @@ def run_audit_job(job_id: str) -> None:
             lead.ai_closing_probability,
         )
         lead.crm_stage = CRMStage.audit_ready.value
-        try_index_audit(lead, audit)
+        update_job(db, job, 85, "Indexing audit")
+        try_index_audit(db, lead, audit)
         complete_job(db, job, {"website_id": website.id, "audit_id": audit.id, "score": audit.total_score})
     except Exception as exc:
         if "job" in locals() and job:
@@ -200,6 +206,13 @@ def generate_ai_report(db: Session, lead: Lead, audit: WebsiteAudit) -> AIReport
         outreach_angle=payload["outreach_angle"],
         closing_probability=payload["closing_probability"],
         raw_response=payload.get("raw_response", {}),
+        prompt_version=payload.get("prompt_version", "audit-strategy-v1"),
+        model_name=payload.get("model_name"),
+        input_snapshot=payload.get("input_snapshot", {}),
+        output_schema_version=payload.get("output_schema_version", "ai-report-v1"),
+        token_usage=payload.get("token_usage", {}),
+        cost_metadata=payload.get("cost_metadata", {}),
+        failure_details=payload.get("failure_details", {}),
     )
     db.add(report)
     lead.ai_closing_probability = report.closing_probability
@@ -214,6 +227,72 @@ def generate_ai_report(db: Session, lead: Lead, audit: WebsiteAudit) -> AIReport
     db.commit()
     db.refresh(report)
     return report
+
+
+def run_ai_report_job(job_id: str, audit_id: str | None = None) -> None:
+    db = SessionLocal()
+    try:
+        job = db.get(CrawlJob, job_id)
+        if not job or not job.lead_id:
+            return
+        lead = db.get(Lead, job.lead_id)
+        audit = db.get(WebsiteAudit, audit_id) if audit_id else latest_audit(db, job.lead_id)
+        if not lead or not audit:
+            fail_job(db, job, "Lead or audit not found.")
+            return
+        start_job(db, job, "Generating AI report")
+        report = generate_ai_report(db, lead, audit)
+        complete_job(db, job, {"ai_report_id": report.id})
+    except Exception as exc:
+        if "job" in locals() and job:
+            fail_job(db, job, str(exc))
+    finally:
+        db.close()
+
+
+def run_outreach_job(job_id: str, channels: list[str] | None = None, actor_payload: dict | None = None) -> None:
+    db = SessionLocal()
+    try:
+        job = db.get(CrawlJob, job_id)
+        if not job or not job.lead_id:
+            return
+        lead = db.get(Lead, job.lead_id)
+        if not lead:
+            fail_job(db, job, "Lead not found.")
+            return
+        start_job(db, job, "Generating outreach drafts")
+        selected = [
+            MessageChannel(channel)
+            for channel in (channels or [channel.value for channel in all_outreach_channels()])
+        ]
+        actor = Actor(**(actor_payload or {}))
+        messages = create_outreach_drafts(db, lead, latest_ai_report(db, lead.id), selected, actor)
+        complete_job(db, job, {"message_ids": [message.id for message in messages]})
+    except Exception as exc:
+        if "job" in locals() and job:
+            fail_job(db, job, str(exc))
+    finally:
+        db.close()
+
+
+def run_proposal_job(job_id: str, actor_payload: dict | None = None) -> None:
+    db = SessionLocal()
+    try:
+        job = db.get(CrawlJob, job_id)
+        if not job or not job.lead_id:
+            return
+        lead = db.get(Lead, job.lead_id)
+        if not lead:
+            fail_job(db, job, "Lead not found.")
+            return
+        start_job(db, job, "Generating proposal")
+        proposal = create_proposal(db, lead, latest_ai_report(db, lead.id), Actor(**(actor_payload or {})))
+        complete_job(db, job, {"proposal_id": proposal.id, "pdf_url": proposal.pdf_url})
+    except Exception as exc:
+        if "job" in locals() and job:
+            fail_job(db, job, str(exc))
+    finally:
+        db.close()
 
 
 def create_outreach_drafts(db: Session, lead: Lead, ai_report: AIReport | None, channels, actor: Actor):
@@ -253,6 +332,16 @@ def create_proposal(db: Session, lead: Lead, ai_report: AIReport | None, actor: 
         estimated_value=value,
         currency=currency,
         content={
+            "sections": [
+                {"title": "Business Context", "body": f"{lead.business_name} can improve website conversion."},
+                {"title": "Recommended Approach", "body": service},
+                {"title": "Expected Outcome", "body": "More qualified local enquiries and clearer trust signals."},
+            ],
+            "packages": [
+                {"name": "Core", "price": value, "items": ["UX refresh", "Local SEO foundation"]},
+            ],
+            "timeline": "2-6 weeks depending on final scope.",
+            "assumptions": ["Manual approval before sending.", "Final pricing depends on discovery."],
             "recommended_work": [
                 "Website UX and mobile redesign",
                 "Local SEO foundation",
@@ -327,6 +416,7 @@ def add_activity(
     actor: Actor,
     from_stage: str | None = None,
     to_stage: str | None = None,
+    next_follow_up_at=None,
 ) -> CRMActivity:
     activity = CRMActivity(
         lead_id=lead.id,
@@ -337,6 +427,7 @@ def add_activity(
         actor_id=actor.id,
         actor_name=actor.name,
         actor_role=actor.role,
+        next_follow_up_at=next_follow_up_at,
     )
     db.add(activity)
     db.commit()
@@ -344,14 +435,24 @@ def add_activity(
     return activity
 
 
-def start_job(db: Session, job: CrawlJob) -> None:
+def start_job(db: Session, job: CrawlJob, current_step: str = "Running") -> None:
     job.status = JobStatus.running.value
+    job.progress_percent = max(job.progress_percent or 0, 5)
+    job.current_step = current_step
     job.started_at = utcnow()
+    db.commit()
+
+
+def update_job(db: Session, job: CrawlJob, progress_percent: int, current_step: str) -> None:
+    job.progress_percent = progress_percent
+    job.current_step = current_step
     db.commit()
 
 
 def complete_job(db: Session, job: CrawlJob, result: dict) -> None:
     job.status = JobStatus.completed.value
+    job.progress_percent = 100
+    job.current_step = "Completed"
     job.result = result
     job.completed_at = utcnow()
     db.commit()
@@ -360,5 +461,6 @@ def complete_job(db: Session, job: CrawlJob, result: dict) -> None:
 def fail_job(db: Session, job: CrawlJob, error: str) -> None:
     job.status = JobStatus.failed.value
     job.error = error
+    job.current_step = "Failed"
     job.completed_at = utcnow()
     db.commit()

@@ -54,16 +54,29 @@ def build_proposal_pdf(proposal: Proposal, lead: Lead) -> bytes:
     pdf.drawString(48, y, proposal.title)
     y -= 34
     pdf.setFont("Helvetica", 11)
-    for line in [
+    lines = [
         f"Prepared for: {lead.business_name}",
         f"Estimated value: {proposal.estimated_value}",
         "",
         "Summary:",
         proposal.summary,
-        "",
-        "Recommended Work:",
-        ", ".join(proposal.content.get("recommended_work", [])),
-    ]:
+    ]
+    for section in proposal.content.get("sections", []):
+        lines.extend(["", section.get("title", "Section"), section.get("body", "")])
+    packages = proposal.content.get("packages", [])
+    if packages:
+        lines.extend(["", "Packages:"])
+        for package in packages:
+            lines.append(f"{package.get('name', 'Package')}: {package.get('price', proposal.estimated_value)}")
+            items = package.get("items", [])
+            if items:
+                lines.append(", ".join(items))
+    if proposal.content.get("timeline"):
+        lines.extend(["", "Timeline:", proposal.content["timeline"]])
+    assumptions = proposal.content.get("assumptions", [])
+    if assumptions:
+        lines.extend(["", "Assumptions:", ", ".join(assumptions)])
+    for line in lines:
         y = draw_wrapped(pdf, line, 48, y, width - 96)
     pdf.showPage()
     pdf.save()

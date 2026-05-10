@@ -1,20 +1,22 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.deps import require_role
 from app.db.session import get_db
-from app.models import Campaign, Lead
+from app.models import Campaign, CRMActivity, CrawlJob, EnrichmentRecord, Lead, OutreachMessage, Proposal
 from app.schemas import (
     CSVImportSummary,
     GooglePlacesDiscoveryRequest,
     JobRead,
+    LeadAuditDetail,
     LeadCreate,
     LeadRead,
     LeadUpdate,
 )
-from app.services.jobs import create_job, run_google_places_job
+from app.services.jobs import create_job, latest_ai_report, latest_audit, latest_website
 from app.services.leads import import_csv_leads, upsert_lead
 from app.services.normalization import (
     build_dedupe_key,
@@ -25,6 +27,7 @@ from app.services.normalization import (
     normalize_phone,
     normalize_url,
 )
+from app.workers.celery_app import discover_google_places_task
 
 router = APIRouter()
 
@@ -37,6 +40,7 @@ def list_leads(
     search: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
+    _actor=Depends(require_role("read")),
 ) -> list[Lead]:
     query = select(Lead).order_by(Lead.created_at.desc()).limit(limit)
     if campaign_id:
@@ -52,7 +56,11 @@ def list_leads(
 
 
 @router.post("", response_model=LeadRead)
-def create_lead(payload: LeadCreate, db: Session = Depends(get_db)) -> Lead:
+def create_lead(
+    payload: LeadCreate,
+    db: Session = Depends(get_db),
+    _actor=Depends(require_role("operate")),
+) -> Lead:
     campaign = db.get(Campaign, payload.campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found.")
@@ -65,15 +73,71 @@ def create_lead(payload: LeadCreate, db: Session = Depends(get_db)) -> Lead:
 
 
 @router.get("/{lead_id}", response_model=LeadRead)
-def get_lead(lead_id: str, db: Session = Depends(get_db)) -> Lead:
+def get_lead(
+    lead_id: str,
+    db: Session = Depends(get_db),
+    _actor=Depends(require_role("read")),
+) -> Lead:
     lead = db.get(Lead, lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found.")
     return lead
 
 
+@router.get("/{lead_id}/detail", response_model=LeadAuditDetail)
+def get_lead_detail(
+    lead_id: str,
+    db: Session = Depends(get_db),
+    _actor=Depends(require_role("read")),
+) -> dict:
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found.")
+    return {
+        "lead": lead,
+        "campaign": lead.campaign,
+        "website": latest_website(db, lead_id),
+        "audit": latest_audit(db, lead_id),
+        "ai_report": latest_ai_report(db, lead_id),
+        "outreach_messages": list(
+            db.scalars(
+                select(OutreachMessage)
+                .where(OutreachMessage.lead_id == lead_id)
+                .order_by(OutreachMessage.created_at.desc())
+            ).all()
+        ),
+        "proposals": list(
+            db.scalars(
+                select(Proposal).where(Proposal.lead_id == lead_id).order_by(Proposal.created_at.desc())
+            ).all()
+        ),
+        "crm_activities": list(
+            db.scalars(
+                select(CRMActivity)
+                .where(CRMActivity.lead_id == lead_id)
+                .order_by(CRMActivity.created_at.desc())
+            ).all()
+        ),
+        "jobs": list(
+            db.scalars(select(CrawlJob).where(CrawlJob.lead_id == lead_id).order_by(CrawlJob.created_at.desc())).all()
+        ),
+        "enrichments": list(
+            db.scalars(
+                select(EnrichmentRecord)
+                .where(EnrichmentRecord.lead_id == lead_id)
+                .order_by(EnrichmentRecord.created_at.desc())
+            ).all()
+        ),
+    }
+
+
 @router.patch("/{lead_id}", response_model=LeadRead)
-def update_lead(lead_id: str, payload: LeadUpdate, db: Session = Depends(get_db)) -> Lead:
+def update_lead(
+    lead_id: str,
+    payload: LeadUpdate,
+    db: Session = Depends(get_db),
+    _actor=Depends(require_role("operate")),
+) -> Lead:
     lead = db.get(Lead, lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found.")
@@ -100,6 +164,7 @@ async def import_leads(
     campaign_id: str = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    _actor=Depends(require_role("operate")),
 ) -> dict:
     campaign = db.get(Campaign, campaign_id)
     if not campaign:
@@ -111,8 +176,8 @@ async def import_leads(
 @router.post("/discover/google-places", response_model=JobRead)
 def discover_google_places_for_campaign(
     payload: GooglePlacesDiscoveryRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    _actor=Depends(require_role("operate")),
 ) -> object:
     campaign = db.get(Campaign, payload.campaign_id)
     if not campaign:
@@ -123,6 +188,6 @@ def discover_google_places_for_campaign(
         campaign_id=campaign.id,
         result={"limit": payload.limit},
     )
-    background_tasks.add_task(run_google_places_job, job.id, payload.limit)
+    discover_google_places_task.delay(job.id, payload.limit)
     return job
 

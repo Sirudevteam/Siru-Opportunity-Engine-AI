@@ -13,36 +13,39 @@ export function ProposalCenter() {
   const [messages, setMessages] = useState<OutreachMessage[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     void refresh();
   }, []);
 
   async function refresh() {
-    const [leadData, proposalData] = await Promise.all([api.leads(), api.proposals()]);
-    setLeads(leadData);
-    setProposals(proposalData);
-    setSelectedLeadId((current) => current || leadData[0]?.id || "");
+    try {
+      const [leadData, proposalData] = await Promise.all([api.leads(), api.proposals()]);
+      setLeads(leadData);
+      setProposals(proposalData);
+      setSelectedLeadId((current) => current || leadData[0]?.id || "");
+      setError("");
+    } catch {
+      setLeads([]);
+      setProposals([]);
+      setSelectedLeadId("");
+      setError("Unable to load proposal data. Check the backend connection and refresh.");
+    }
   }
 
   async function generateOutreach() {
     if (!selectedLeadId) return;
     setBusy(true);
     try {
-      setMessages(await api.generateOutreach(selectedLeadId));
+      const job = await api.generateOutreach(selectedLeadId);
+      setError(`Outreach job ${job.status}: ${job.id}`);
+      await waitForJob(job.id);
+      setMessages(await api.outreach(selectedLeadId));
+      setError("");
     } catch {
-      const lead = leads.find((item) => item.id === selectedLeadId);
-      setMessages([
-        {
-          id: "demo-message",
-          lead_id: selectedLeadId,
-          channel: "whatsapp",
-          subject: null,
-          body: `Hi, we reviewed ${lead?.business_name ?? "your business"}'s website and found a few improvements that may help increase enquiries from mobile users. Can I share the quick audit summary?`,
-          status: "draft",
-          created_at: new Date().toISOString()
-        }
-      ]);
+      setMessages([]);
+      setError("Unable to generate outreach. Please try again after the backend completes the request.");
     } finally {
       setBusy(false);
     }
@@ -52,25 +55,24 @@ export function ProposalCenter() {
     if (!selectedLeadId) return;
     setBusy(true);
     try {
-      const proposal = await api.generateProposal(selectedLeadId);
-      setProposals((current) => [proposal, ...current]);
+      const job = await api.generateProposal(selectedLeadId);
+      setError(`Proposal job ${job.status}: ${job.id}`);
+      await waitForJob(job.id);
+      setProposals(await api.proposals());
+      setError("");
     } catch {
-      const lead = leads.find((item) => item.id === selectedLeadId);
-      setProposals((current) => [
-        {
-          id: `proposal-${Date.now()}`,
-          lead_id: selectedLeadId,
-          title: `Website Redesign + Local SEO Proposal for ${lead?.business_name ?? "Lead"}`,
-          summary: "Mobile UX, local SEO, conversion CTAs, trust signals, and lead capture improvements.",
-          estimated_value: "INR 75,000 - INR 250,000",
-          status: "draft",
-          pdf_url: null,
-          created_at: new Date().toISOString()
-        },
-        ...current
-      ]);
+      setError("Unable to generate proposal. Please try again after the backend completes the request.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function waitForJob(jobId: string) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const job = await api.job(jobId);
+      if (job.status === "completed") return;
+      if (job.status === "failed") throw new Error(job.error ?? "Job failed");
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
     }
   }
 
@@ -80,6 +82,7 @@ export function ProposalCenter() {
         <h1 className="text-2xl font-semibold tracking-normal">Outreach & Proposals</h1>
         <p className="mt-1 text-sm text-ink/60">Manual-send drafts, call scripts, proposal summaries, and PDFs.</p>
       </div>
+      {error ? <div className="rounded-md border border-line bg-panel p-3 text-sm text-ink/60">{error}</div> : null}
 
       <section className="rounded-lg border border-line bg-panel p-4 shadow-panel">
         <div className="grid gap-3 md:grid-cols-[1fr_auto_auto_auto] md:items-end">
@@ -144,27 +147,31 @@ export function ProposalCenter() {
             <FileText size={18} className="text-blue" />
           </div>
           <div className="space-y-3 p-4">
-            {proposals.map((proposal) => (
-              <article key={proposal.id} className="rounded-md border border-line p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold">{proposal.title}</h3>
-                    <p className="mt-1 text-sm text-ink/65">{proposal.summary}</p>
+            {proposals.length ? (
+              proposals.map((proposal) => (
+                <article key={proposal.id} className="rounded-md border border-line p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold">{proposal.title}</h3>
+                      <p className="mt-1 text-sm text-ink/65">{proposal.summary}</p>
+                    </div>
+                    <StatusBadge value={proposal.status} />
                   </div>
-                  <StatusBadge value={proposal.status} />
-                </div>
-                <div className="mt-3 flex items-center justify-between text-sm">
-                  <span className="font-semibold">{proposal.estimated_value}</span>
-                  {proposal.pdf_url ? (
-                    <a className="text-teal underline" href={proposal.pdf_url}>
-                      PDF
-                    </a>
-                  ) : (
-                    <span className="text-ink/45">PDF pending</span>
-                  )}
-                </div>
-              </article>
-            ))}
+                  <div className="mt-3 flex items-center justify-between text-sm">
+                    <span className="font-semibold">{proposal.estimated_value}</span>
+                    {proposal.pdf_url ? (
+                      <a className="text-teal underline" href={proposal.pdf_url}>
+                        PDF
+                      </a>
+                    ) : (
+                      <span className="text-ink/45">PDF pending</span>
+                    )}
+                  </div>
+                </article>
+              ))
+            ) : (
+              <div className="rounded-md border border-dashed border-line p-6 text-sm text-ink/45">No proposals</div>
+            )}
           </div>
         </div>
       </section>

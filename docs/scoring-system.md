@@ -37,11 +37,11 @@ Final Lead Score =
   + AI Closing Probability
 ```
 
-The first five inputs are deterministic platform scores. AI closing probability is included only after an AI report exists; otherwise the deterministic fallback is used.
+The first five inputs are deterministic platform scores. AI closing probability is included only after an AI report exists. If no AI report exists, final scoring uses the deterministic inputs only.
 
 ## Interpretation
 
 - High final score means the lead is commercially attractive for Siru.
 - Low website quality increases opportunity when the business appears valuable and contactable.
-- AI output should influence prioritization, but deterministic scores remain visible for auditability.
+- AI output should influence prioritization after a successful AI job, but deterministic scores remain visible for auditability.
 

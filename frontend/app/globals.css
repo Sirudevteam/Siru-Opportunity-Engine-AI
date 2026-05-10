@@ -19,8 +19,7 @@ body {
   margin: 0;
   background: #fbfbff;
   color: #070b16;
-  font-family:
-    var(--font-raleway), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   letter-spacing: 0;
   font-feature-settings:
     "lnum" 1,

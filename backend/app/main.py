@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.db.init_db import init_db
+from app.middleware import RequestContextMiddleware
 
 
 settings = get_settings()
@@ -18,6 +19,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app.add_middleware(RequestContextMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,4 +35,9 @@ app.include_router(api_router, prefix=settings.api_prefix)
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": settings.app_name, "environment": settings.environment}
+
+
+@app.get("/ready")
+def ready() -> dict:
+    return {"status": "ready", "service": settings.app_name}
 

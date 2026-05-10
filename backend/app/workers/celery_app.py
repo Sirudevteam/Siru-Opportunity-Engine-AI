@@ -1,18 +1,12 @@
 from celery import Celery
-from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.db.session import SessionLocal
-from app.models import Lead, WebsiteAudit
-from app.schemas import Actor
 from app.services.jobs import (
-    all_outreach_channels,
-    create_outreach_drafts,
-    create_proposal,
-    generate_ai_report as generate_ai_report_service,
-    latest_ai_report,
     run_audit_job,
+    run_ai_report_job,
     run_google_places_job,
+    run_outreach_job,
+    run_proposal_job,
 )
 
 settings = get_settings()
@@ -22,59 +16,40 @@ celery_app = Celery(
     broker=settings.redis_url,
     backend=settings.redis_url,
 )
+celery_app.conf.update(
+    task_always_eager=settings.celery_task_always_eager,
+    task_time_limit=settings.celery_task_time_limit_seconds,
+    task_soft_time_limit=max(settings.celery_task_time_limit_seconds - 30, 30),
+)
 
 
-@celery_app.task(name="discover_google_places")
+@celery_app.task(name="discover_google_places", autoretry_for=(Exception,), retry_backoff=True, max_retries=2)
 def discover_google_places_task(job_id: str, limit: int = 50) -> None:
     run_google_places_job(job_id, limit)
 
 
-@celery_app.task(name="crawl_website")
+@celery_app.task(name="crawl_website", autoretry_for=(Exception,), retry_backoff=True, max_retries=2)
 def crawl_website_task(job_id: str) -> None:
     run_audit_job(job_id)
 
 
-@celery_app.task(name="analyze_website")
+@celery_app.task(name="analyze_website", autoretry_for=(Exception,), retry_backoff=True, max_retries=2)
 def analyze_website_task(job_id: str) -> None:
     run_audit_job(job_id)
 
 
-@celery_app.task(name="generate_ai_report")
-def generate_ai_report_task(lead_id: str, audit_id: str) -> str | None:
-    db: Session = SessionLocal()
-    try:
-        lead = db.get(Lead, lead_id)
-        audit = db.get(WebsiteAudit, audit_id)
-        if not lead or not audit:
-            return None
-        report = generate_ai_report_service(db, lead, audit)
-        return report.id
-    finally:
-        db.close()
+@celery_app.task(name="generate_ai_report", autoretry_for=(Exception,), retry_backoff=True, max_retries=1)
+def generate_ai_report_task(job_id: str, audit_id: str | None = None) -> None:
+    run_ai_report_job(job_id, audit_id)
 
 
-@celery_app.task(name="generate_outreach")
-def generate_outreach_task(lead_id: str) -> list[str]:
-    db: Session = SessionLocal()
-    try:
-        lead = db.get(Lead, lead_id)
-        if not lead:
-            return []
-        report = latest_ai_report(db, lead_id)
-        messages = create_outreach_drafts(db, lead, report, all_outreach_channels(), Actor())
-        return [message.id for message in messages]
-    finally:
-        db.close()
+@celery_app.task(name="generate_outreach", autoretry_for=(Exception,), retry_backoff=True, max_retries=1)
+def generate_outreach_task(
+    job_id: str, channels: list[str] | None = None, actor_payload: dict | None = None
+) -> None:
+    run_outreach_job(job_id, channels, actor_payload)
 
 
-@celery_app.task(name="generate_pdf")
-def generate_pdf_task(lead_id: str) -> str | None:
-    db: Session = SessionLocal()
-    try:
-        lead = db.get(Lead, lead_id)
-        if not lead:
-            return None
-        proposal = create_proposal(db, lead, latest_ai_report(db, lead_id), Actor())
-        return proposal.id
-    finally:
-        db.close()
+@celery_app.task(name="generate_pdf", autoretry_for=(Exception,), retry_backoff=True, max_retries=1)
+def generate_pdf_task(job_id: str, actor_payload: dict | None = None) -> None:
+    run_proposal_job(job_id, actor_payload)

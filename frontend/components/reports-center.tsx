@@ -13,13 +13,20 @@ const colors = ["#062bff", "#8b90ff", "#d97706", "#10885f", "#dc2626", "#070b16"
 
 export function ReportsCenter() {
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     void refresh();
   }, []);
 
   async function refresh() {
-    setOverview(await api.overview());
+    try {
+      setOverview(await api.overview());
+      setError("");
+    } catch {
+      setOverview(null);
+      setError("Unable to load reports. Check the backend connection and refresh.");
+    }
   }
 
   const stageData = useMemo(() => {
@@ -48,6 +55,7 @@ export function ReportsCenter() {
           Refresh
         </Button>
       </div>
+      {error ? <div className="rounded-md border border-line bg-panel p-3 text-sm text-ink/60">{error}</div> : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <KpiCard

@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_actor
+from app.api.deps import get_actor, require_role
 from app.db.session import get_db
-from app.models import CRMStage, Lead
+from app.models import CRMActivity, CRMStage, Lead
 from app.schemas import Actor, CRMActivityCreate, CRMActivityRead, CRMStageUpdate, PipelineColumn
 from app.services.jobs import add_activity
 
@@ -14,7 +14,10 @@ router = APIRouter()
 
 
 @router.get("/pipeline", response_model=list[PipelineColumn])
-def get_pipeline(db: Session = Depends(get_db)) -> list[dict]:
+def get_pipeline(
+    db: Session = Depends(get_db),
+    _actor=Depends(require_role("read")),
+) -> list[dict]:
     columns = []
     for stage in CRMStage:
         leads = list(
@@ -39,6 +42,7 @@ def move_stage(
     payload: CRMStageUpdate,
     actor: Actor = Depends(get_actor),
     db: Session = Depends(get_db),
+    _role=Depends(require_role("operate")),
 ) -> object:
     lead = db.get(Lead, lead_id)
     if not lead:
@@ -56,9 +60,35 @@ def create_activity(
     payload: CRMActivityCreate,
     actor: Actor = Depends(get_actor),
     db: Session = Depends(get_db),
+    _role=Depends(require_role("operate")),
 ) -> object:
     lead = db.get(Lead, lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found.")
-    return add_activity(db, lead, payload.activity_type, payload.note, actor)
+    return add_activity(
+        db,
+        lead,
+        payload.activity_type,
+        payload.note,
+        actor,
+        next_follow_up_at=payload.next_follow_up_at,
+    )
+
+
+@router.get("/leads/{lead_id}/activities", response_model=list[CRMActivityRead])
+def list_activities(
+    lead_id: str,
+    db: Session = Depends(get_db),
+    _actor=Depends(require_role("read")),
+) -> list:
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found.")
+    return list(
+        db.scalars(
+            select(CRMActivity)
+            .where(CRMActivity.lead_id == lead_id)
+            .order_by(CRMActivity.created_at.desc())
+        ).all()
+    )
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { FileUp, Globe2, Plus, RotateCw, Search } from "lucide-react";
 import { api } from "@/lib/api";
 import { scoreColor } from "@/lib/utils";
@@ -15,6 +16,7 @@ export function LeadWorkbench() {
   const [query, setQuery] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [jobMessage, setJobMessage] = useState("");
+  const [error, setError] = useState("");
   const [leadForm, setLeadForm] = useState({
     business_name: "",
     website_url: "",
@@ -27,10 +29,18 @@ export function LeadWorkbench() {
   }, []);
 
   async function refresh() {
-    const [campaignData, leadData] = await Promise.all([api.campaigns(), api.leads()]);
-    setCampaigns(campaignData);
-    setLeads(leadData);
-    setCampaignId((current) => current || campaignData[0]?.id || "");
+    try {
+      const [campaignData, leadData] = await Promise.all([api.campaigns(), api.leads()]);
+      setCampaigns(campaignData);
+      setLeads(leadData);
+      setCampaignId((current) => current || campaignData[0]?.id || "");
+      setError("");
+    } catch {
+      setCampaigns([]);
+      setLeads([]);
+      setCampaignId("");
+      setError("Unable to load leads. Check the backend connection and refresh.");
+    }
   }
 
   const filteredLeads = useMemo(() => {
@@ -45,26 +55,41 @@ export function LeadWorkbench() {
   async function submitLead(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!campaignId) return;
-    await api.createLead({
-      campaign_id: campaignId,
-      ...leadForm
-    });
-    setLeadForm({ business_name: "", website_url: "", phone: "", email: "" });
-    await refresh();
+    try {
+      await api.createLead({
+        campaign_id: campaignId,
+        ...leadForm
+      });
+      setLeadForm({ business_name: "", website_url: "", phone: "", email: "" });
+      await refresh();
+      setError("");
+    } catch {
+      setError("Unable to add lead. Please try again after the backend completes the request.");
+    }
   }
 
   async function importCsv() {
     if (!campaignId || !file) return;
-    const result = await api.importLeads(campaignId, file);
-    setJobMessage(`Imported ${result.imported}; duplicates ${result.duplicates}; skipped ${result.skipped}.`);
-    setFile(null);
-    await refresh();
+    try {
+      const result = await api.importLeads(campaignId, file);
+      setJobMessage(`Imported ${result.imported}; duplicates ${result.duplicates}; skipped ${result.skipped}.`);
+      setFile(null);
+      await refresh();
+      setError("");
+    } catch {
+      setError("Unable to import CSV. Please check the file and backend connection.");
+    }
   }
 
   async function discover() {
     if (!campaignId) return;
-    const job = await api.discoverGooglePlaces(campaignId, 50);
-    setJobMessage(`Google Places job ${job.status}: ${job.id}`);
+    try {
+      const job = await api.discoverGooglePlaces(campaignId, 50);
+      setJobMessage(`Google Places job ${job.status}: ${job.id}`);
+      setError("");
+    } catch {
+      setError("Unable to start Google Places discovery. Check the backend connection and API configuration.");
+    }
   }
 
   return (
@@ -73,6 +98,7 @@ export function LeadWorkbench() {
         <h1 className="text-2xl font-semibold tracking-normal">Leads</h1>
         <p className="mt-1 text-sm text-ink/60">Discovery, import, dedupe, and lead qualification.</p>
       </div>
+      {error ? <div className="rounded-md border border-line bg-panel p-3 text-sm text-ink/60">{error}</div> : null}
 
       <section className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
         <div className="rounded-lg border border-line bg-panel p-4 shadow-panel">
@@ -189,32 +215,42 @@ export function LeadWorkbench() {
               </tr>
             </thead>
             <tbody>
-              {filteredLeads.map((lead) => (
-                <tr key={lead.id} className="border-t border-line">
-                  <td className="px-4 py-3">
-                    <p className="font-medium">{lead.business_name}</p>
-                    <p className="text-xs text-ink/55">{lead.website_url ?? "No website"}</p>
-                  </td>
-                  <td className="px-4 py-3 text-ink/65">
-                    <p>{lead.email ?? "-"}</p>
-                    <p>{lead.phone ?? "-"}</p>
-                  </td>
-                  <td className="px-4 py-3 text-ink/65">
-                    {lead.city}, {lead.country}
-                  </td>
-                  <td className="px-4 py-3">{lead.review_count ?? 0}</td>
-                  <td className={`px-4 py-3 font-semibold ${scoreColor(lead.website_score)}`}>
-                    {lead.website_score ?? "-"}
-                  </td>
-                  <td className="px-4 py-3 font-semibold">{lead.final_lead_score ?? "-"}</td>
-                  <td className="px-4 py-3">
-                    <StatusBadge value={lead.priority_category} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge value={lead.crm_stage} />
+              {filteredLeads.length ? (
+                filteredLeads.map((lead) => (
+                  <tr key={lead.id} className="border-t border-line">
+                    <td className="px-4 py-3">
+                      <Link className="font-medium underline-offset-2 hover:underline" href={`/leads/${lead.id}`}>
+                        {lead.business_name}
+                      </Link>
+                      <p className="text-xs text-ink/55">{lead.website_url ?? "No website"}</p>
+                    </td>
+                    <td className="px-4 py-3 text-ink/65">
+                      <p>{lead.email ?? "-"}</p>
+                      <p>{lead.phone ?? "-"}</p>
+                    </td>
+                    <td className="px-4 py-3 text-ink/65">
+                      {lead.city}, {lead.country}
+                    </td>
+                    <td className="px-4 py-3">{lead.review_count ?? 0}</td>
+                    <td className={`px-4 py-3 font-semibold ${scoreColor(lead.website_score)}`}>
+                      {lead.website_score ?? "-"}
+                    </td>
+                    <td className="px-4 py-3 font-semibold">{lead.final_lead_score ?? "-"}</td>
+                    <td className="px-4 py-3">
+                      <StatusBadge value={lead.priority_category} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge value={lead.crm_stage} />
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr className="border-t border-line">
+                  <td className="px-4 py-6 text-sm text-ink/45" colSpan={8}>
+                    No leads found.
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
